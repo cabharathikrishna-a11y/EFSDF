@@ -1833,8 +1833,9 @@ class AppViewModel(application: Application, private val repository: LocalReposi
 
             // Safeguard active local timer from passive remote state sync.
             // If local is currently focusing, we only allow remote state to modify or stop our timer
-            // if there was a brand new explicit button click from a remote device.
-            if (isLocalFocusing && !hasNewRemoteButton) {
+            // if there was a brand new explicit button click from a remote device,
+            // OR if the remote state explicitly says we are no longer focusing (e.g. paused or stopped).
+            if (isLocalFocusing && !hasNewRemoteButton && isRemoteFocusing) {
                 return
             }
             
@@ -1888,13 +1889,24 @@ class AppViewModel(application: Application, private val repository: LocalReposi
                     }
                 }
             } else {
-                // Remote is NOT focusing: if local is focusing, stop it!
+                // Remote is NOT focusing: if local is focusing, stop/pause it based on remote status!
                 if (isLocalFocusing) {
-                    if (FocusTimerManager.isTimerRunning.value) {
-                        FocusTimerManager.pauseTimer(context)
-                    }
-                    if (FocusTimerManager.isStopwatchActive.value) {
-                        FocusTimerManager.pauseStopwatch(context)
+                    val status = remoteUser.focusStatus ?: "idle"
+                    if (status == "paused") {
+                        if (FocusTimerManager.isTimerRunning.value) {
+                            FocusTimerManager.pauseTimer(context)
+                        }
+                        if (FocusTimerManager.isStopwatchActive.value) {
+                            FocusTimerManager.pauseStopwatch(context)
+                        }
+                    } else {
+                        // idle, break, or other -> Reset/End
+                        if (FocusTimerManager.isTimerRunning.value) {
+                            FocusTimerManager.resetTimer(context, saveSession = false)
+                        }
+                        if (FocusTimerManager.isStopwatchActive.value) {
+                            FocusTimerManager.resetStopwatch(context, saveSession = false)
+                        }
                     }
                 }
             }

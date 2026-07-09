@@ -51,8 +51,7 @@ fun FriendsFocusPill(
     // Filter active users who are focusing
     val focusingUsers = allUsers.filter {
         it.value.isFocusing == true && 
-        it.key != "admin" &&
-        it.key != currentMeUsername
+        it.key != "admin"
     }
 
     Box(
