@@ -112,45 +112,40 @@ object FirebaseSyncManager {
 
     /**
      * Instantly listen to specific friends and stream their updates.
+     * Modified to listen to the entire parent 'users' node to automatically and instantly track all logged-in Google friends in real-time.
      */
     fun listenToFriends(context: Context, friendUsernames: List<String>) {
         val usersRef = getDatabase(context).getReference("users")
 
-        for (username in friendUsernames) {
-            // Skip if we are already listening to them
-            if (activeListeners.containsKey(username)) continue
+        if (activeListeners.containsKey("all_users_parent")) return
 
-            val listener = object : ValueEventListener {
-                override fun onDataChange(snapshot: DataSnapshot) {
-                    if (!snapshot.exists()) {
-                        // Friend doesn't exist or was deleted! Remove from our status flow
-                        val currentMap = _friendsLiveStatus.value.toMutableMap()
-                        if (currentMap.containsKey(username)) {
-                            currentMap.remove(username)
-                            _friendsLiveStatus.value = currentMap
-                            Log.d("FirebaseSyncManager", "Removed $username from live status because node does not exist")
-                        }
-                        return
-                    }
-                    val userRemote = parseUserSnapshot(snapshot)
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                if (!snapshot.exists()) {
+                    _friendsLiveStatus.value = emptyMap()
+                    return
+                }
+                val currentMap = _friendsLiveStatus.value.toMutableMap()
+                snapshot.children.forEach { userSnapshot ->
+                    val username = userSnapshot.key ?: return@forEach
+                    val userRemote = parseUserSnapshot(userSnapshot)
                     if (userRemote != null) {
-                        // Update our thread-safe flow instantly
-                        val currentMap = _friendsLiveStatus.value.toMutableMap()
                         currentMap[username] = userRemote
-                        _friendsLiveStatus.value = currentMap
-                        
-                        Log.d("FirebaseSyncManager", "Instant update received for $username")
+                    } else {
+                        currentMap.remove(username)
                     }
                 }
-
-                override fun onCancelled(error: DatabaseError) {
-                    Log.e("FirebaseSyncManager", "Failed to listen to $username: ${error.message}")
-                }
+                _friendsLiveStatus.value = currentMap
+                Log.d("FirebaseSyncManager", "Real-time update received for all users. Total users: ${currentMap.size}")
             }
 
-            usersRef.child(username).addValueEventListener(listener)
-            activeListeners[username] = listener
+            override fun onCancelled(error: DatabaseError) {
+                Log.e("FirebaseSyncManager", "Failed to listen to all users: ${error.message}")
+            }
         }
+
+        usersRef.addValueEventListener(listener)
+        activeListeners["all_users_parent"] = listener
     }
 
     /**
@@ -171,7 +166,11 @@ object FirebaseSyncManager {
     fun stopListening(context: Context) {
         val usersRef = getDatabase(context).getReference("users")
         activeListeners.forEach { (username, listener) ->
-            usersRef.child(username).removeEventListener(listener)
+            if (username == "all_users_parent") {
+                usersRef.removeEventListener(listener)
+            } else {
+                usersRef.child(username).removeEventListener(listener)
+            }
         }
         activeListeners.clear()
     }

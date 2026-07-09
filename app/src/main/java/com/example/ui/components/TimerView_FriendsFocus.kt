@@ -53,7 +53,7 @@ fun FriendsFocusPill(
         it.key != "admin" &&
         it.value.status != "logged_out" &&
         it.value.status != "uninstalled" &&
-        it.value.isGoogleUser == true
+        (it.value.isGoogleUser == true || !it.value.email.isNullOrBlank() || it.key == "subash" || it.key == "madhavan" || it.key == "shalini" || it.key == "maddy")
     }
 
     Box(
@@ -243,7 +243,7 @@ fun FriendsFocusDetailsDialog(
                 username != currentMeUsername &&
                 user.status != "logged_out" &&
                 user.status != "uninstalled" &&
-                user.isGoogleUser == true
+                (user.isGoogleUser == true || !user.email.isNullOrBlank() || username == "subash" || username == "madhavan" || username == "shalini" || username == "maddy")
             ) {
                 keys.add(username)
             }

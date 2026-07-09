@@ -776,7 +776,7 @@ class KeepAliveService : Service() {
                 users.forEach { (username, peer) ->
                     if (username != currentUsername && 
                         username != "admin" &&
-                        peer.isGoogleUser == true
+                        (peer.isGoogleUser == true || !peer.email.isNullOrBlank() || username == "subash" || username == "madhavan" || username == "shalini" || username == "maddy")
                     ) {
                         val isPeerNowFocusing = peer.isFocusing == true
                         latestFetchedPeerStates[username] = isPeerNowFocusing
@@ -1122,7 +1122,7 @@ class KeepAliveService : Service() {
             users.forEach { (username, u) ->
                 if (username != currentUsername && 
                     username != "admin" &&
-                    u.isGoogleUser == true
+                    (u.isGoogleUser == true || !u.email.isNullOrBlank() || username == "subash" || username == "madhavan" || username == "shalini" || username == "maddy")
                 ) {
                     val nameToShow = u.nickname ?: u.name ?: username
                     val isFocusing = u.isFocusing == true
