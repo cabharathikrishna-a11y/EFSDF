@@ -598,7 +598,7 @@ class KeepAliveService : Service() {
                             val remoteIsFocusing = meRemote.isFocusing == true
                             val remoteLastUpdatedDeviceId = meRemote.lastUpdatedDeviceId
 
-                            if (localIsActive && !remoteIsFocusing && remoteLastUpdatedDeviceId != null && remoteLastUpdatedDeviceId != myDeviceId) {
+                            if (localIsActive && !remoteIsFocusing && (remoteLastUpdatedDeviceId == null || remoteLastUpdatedDeviceId != myDeviceId)) {
                                 Log.i("KeepAliveService", "Real-time check: Focus ended remotely by another device ($remoteLastUpdatedDeviceId). Resetting local session.")
                                 com.example.util.FocusTimerManager.performCloudAlignmentCheck(applicationContext)
                             }

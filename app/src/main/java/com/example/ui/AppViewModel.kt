@@ -1806,10 +1806,10 @@ class AppViewModel(application: Application, private val repository: LocalReposi
                         }
                         "end" -> {
                             if (FocusTimerManager.isTimerRunning.value) {
-                                FocusTimerManager.pauseTimer(context)
+                                FocusTimerManager.resetTimer(context, saveSession = false)
                             }
                             if (FocusTimerManager.isStopwatchActive.value) {
-                                FocusTimerManager.pauseStopwatch(context)
+                                FocusTimerManager.resetStopwatch(context, saveSession = false)
                             }
                         }
                         "start_stopwatch" -> {

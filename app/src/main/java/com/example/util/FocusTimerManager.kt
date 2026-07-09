@@ -243,7 +243,7 @@ object FocusTimerManager {
                         val remoteLastUpdatedDeviceId = baseUser.lastUpdatedDeviceId
                         val localIsActive = isTimerRunning.value || isStopwatchActive.value
 
-                        if (localIsActive && !remoteIsFocusing && remoteLastUpdatedDeviceId != null && remoteLastUpdatedDeviceId != myDeviceId) {
+                        if (localIsActive && !remoteIsFocusing && (remoteLastUpdatedDeviceId == null || remoteLastUpdatedDeviceId != myDeviceId)) {
                             addSystemLog(context, "Session Ended Remotely", "FIREBASE_SYNC", "Web app/other device ended the session. Resetting local timer/stopwatch without saving.")
                             launch(Dispatchers.Main) {
                                 if (isTimerRunning.value) {
