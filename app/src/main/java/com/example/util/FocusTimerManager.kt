@@ -238,21 +238,62 @@ object FocusTimerManager {
                         val todayStr = sdf.format(java.util.Date())
                         val myDeviceId = getOrCreateDeviceId(context)
 
-                        // 0. Check if remote session has been ended/stopped by another device (like web app)
+                        // 0. Check if remote session has been ended/stopped/paused/started by another device (like web app)
                         val remoteIsFocusing = baseUser.isFocusing == true
                         val remoteLastUpdatedDeviceId = baseUser.lastUpdatedDeviceId
                         val localIsActive = isTimerRunning.value || isStopwatchActive.value
 
-                        if (localIsActive && !remoteIsFocusing && (remoteLastUpdatedDeviceId == null || remoteLastUpdatedDeviceId != myDeviceId)) {
-                            addSystemLog(context, "Session Ended Remotely", "FIREBASE_SYNC", "Web app/other device ended the session. Resetting local timer/stopwatch without saving.")
-                            launch(Dispatchers.Main) {
-                                if (isTimerRunning.value) {
-                                    resetTimer(context, saveSession = false)
-                                } else if (isStopwatchActive.value) {
-                                    resetStopwatch(context, saveSession = false)
+                        if (localIsActive && (remoteLastUpdatedDeviceId == null || remoteLastUpdatedDeviceId != myDeviceId)) {
+                            val remoteFocusStatus = baseUser.focusStatus ?: "idle"
+                            val remoteAccumulatedTimeMs = baseUser.accumulatedTimeMs
+
+                            if (!remoteIsFocusing) {
+                                if (remoteFocusStatus == "paused") {
+                                    addSystemLog(context, "Session Paused Remotely", "FIREBASE_SYNC", "Web app/other device paused the session. Pausing local timer/stopwatch and aligning accumulated time.")
+                                    withContext(Dispatchers.Main) {
+                                        if (isTimerRunning.value) {
+                                            pauseTimer(context)
+                                            _accumulatedSessionTimeMs.value = remoteAccumulatedTimeMs
+                                        } else if (isStopwatchActive.value) {
+                                            pauseStopwatch(context, stopActiveAlarm = false)
+                                            _accumulatedSessionTimeMs.value = remoteAccumulatedTimeMs
+                                            _stopwatchSeconds.value = (remoteAccumulatedTimeMs / 1000).toInt()
+                                            _cumulativeSessionFocusSeconds.value = (remoteAccumulatedTimeMs / 1000).toInt()
+                                        }
+                                    }
+                                } else {
+                                    addSystemLog(context, "Session Ended Remotely", "FIREBASE_SYNC", "Web app/other device ended the session. Resetting local timer/stopwatch without saving.")
+                                    withContext(Dispatchers.Main) {
+                                        if (isTimerRunning.value) {
+                                            resetTimer(context, saveSession = false)
+                                        } else if (isStopwatchActive.value) {
+                                            resetStopwatch(context, saveSession = false)
+                                        }
+                                    }
                                 }
                             }
-                            return@launch
+                        } else if (!localIsActive && remoteIsFocusing && (remoteLastUpdatedDeviceId == null || remoteLastUpdatedDeviceId != myDeviceId)) {
+                            val isRemoteSw = baseUser.isStopwatchMode == true
+                            val remoteAccumulatedTimeMs = baseUser.accumulatedTimeMs
+                            val remoteTaskTitle = baseUser.currentTaskTitle
+                            val remoteTag = baseUser.currentTag
+
+                            addSystemLog(context, "Session Started Remotely", "FIREBASE_SYNC", "Web app/other device started session (isStopwatch=$isRemoteSw). Starting local session to match.")
+                            withContext(Dispatchers.Main) {
+                                if (isRemoteSw) {
+                                    _attachedTask.value = remoteTaskTitle?.let { com.example.data.Task(id = 0, title = it) }
+                                    _attachedTag.value = remoteTag ?: ""
+                                    _accumulatedSessionTimeMs.value = remoteAccumulatedTimeMs
+                                    _stopwatchSeconds.value = (remoteAccumulatedTimeMs / 1000).toInt()
+                                    _cumulativeSessionFocusSeconds.value = (remoteAccumulatedTimeMs / 1000).toInt()
+                                    startStopwatch(context, stopActiveAlarm = false)
+                                } else {
+                                    _attachedTask.value = remoteTaskTitle?.let { com.example.data.Task(id = 0, title = it) }
+                                    _attachedTag.value = remoteTag ?: ""
+                                    _accumulatedSessionTimeMs.value = remoteAccumulatedTimeMs
+                                    startTimer(context, stopActiveAlarm = false)
+                                }
+                            }
                         }
 
                         // 1. Calculate local today's seconds and records
@@ -1314,6 +1355,7 @@ object FocusTimerManager {
 
     fun startTimer(context: Context, stopActiveAlarm: Boolean = true) {
         init(context)
+        updateLastButtonClicked("start_timer")
         setTabFocusTimerSelected(true)
         updateLocalInteractionTimestamp()
         if (stopActiveAlarm) {
@@ -1534,6 +1576,7 @@ object FocusTimerManager {
 
     fun pauseTimer(context: Context) {
         init(context)
+        updateLastButtonClicked("pause_timer")
         
         // ONLY bank time if we are actively focusing
         if (_isFocusPhase.value && !_wasStartedFromStopwatch.value) {
@@ -1660,6 +1703,7 @@ object FocusTimerManager {
 
     fun resetTimer(context: Context, saveSession: Boolean = true) {
         init(context)
+        updateLastButtonClicked("reset_timer")
         updateLocalInteractionTimestamp()
         stopAlarm()
         AlarmScheduler.cancelTimerEndAlarm(context.applicationContext)
@@ -1689,6 +1733,7 @@ object FocusTimerManager {
 
     fun takeBreakFromStopwatch(context: Context) {
         init(context)
+        updateLastButtonClicked("take_break_stopwatch")
         updateLocalInteractionTimestamp()
         stopAlarm()
         pauseStopwatch(context)
@@ -1706,6 +1751,7 @@ object FocusTimerManager {
 
     fun takeBreakFromPomodoro(context: Context) {
         init(context)
+        updateLastButtonClicked("take_break_pomo")
         updateLocalInteractionTimestamp()
         stopAlarm()
         pauseTimer(context)
@@ -1724,6 +1770,7 @@ object FocusTimerManager {
 
     fun skipOrEndBreak(context: Context) {
         init(context)
+        updateLastButtonClicked("skip_or_end_break")
         updateLocalInteractionTimestamp()
         stopAlarm()
         timerJob?.cancel()
@@ -1761,6 +1808,7 @@ object FocusTimerManager {
 
     fun startStopwatch(context: Context, stopActiveAlarm: Boolean = true) {
         init(context)
+        updateLastButtonClicked("start_stopwatch")
         setTabFocusTimerSelected(false)
         if (stopActiveAlarm) {
             stopAlarm()
@@ -1836,6 +1884,7 @@ object FocusTimerManager {
 
     fun pauseStopwatch(context: Context, stopActiveAlarm: Boolean = true) {
         init(context)
+        updateLastButtonClicked("pause_stopwatch")
         val chunkMs = getCurrentChunkMs()
         _accumulatedSessionTimeMs.value += chunkMs
         _stopwatchSeconds.value = (_accumulatedSessionTimeMs.value / 1000).toInt()
@@ -1858,6 +1907,7 @@ object FocusTimerManager {
 
     fun resetStopwatch(context: Context, saveSession: Boolean = true) {
         init(context)
+        updateLastButtonClicked("reset_stopwatch")
         updateLocalInteractionTimestamp()
         stopAlarm()
         stopwatchJob?.cancel()
