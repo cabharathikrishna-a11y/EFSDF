@@ -236,7 +236,25 @@ object FocusTimerManager {
                     if (baseUser != null) {
                         val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
                         val todayStr = sdf.format(java.util.Date())
-                        
+                        val myDeviceId = getOrCreateDeviceId(context)
+
+                        // 0. Check if remote session has been ended/stopped by another device (like web app)
+                        val remoteIsFocusing = baseUser.isFocusing == true
+                        val remoteLastUpdatedDeviceId = baseUser.lastUpdatedDeviceId
+                        val localIsActive = isTimerRunning.value || isStopwatchActive.value
+
+                        if (localIsActive && !remoteIsFocusing && remoteLastUpdatedDeviceId != null && remoteLastUpdatedDeviceId != myDeviceId) {
+                            addSystemLog(context, "Session Ended Remotely", "FIREBASE_SYNC", "Web app/other device ended the session. Resetting local timer/stopwatch without saving.")
+                            launch(Dispatchers.Main) {
+                                if (isTimerRunning.value) {
+                                    resetTimer(context, saveSession = false)
+                                } else if (isStopwatchActive.value) {
+                                    resetStopwatch(context, saveSession = false)
+                                }
+                            }
+                            return@launch
+                        }
+
                         // 1. Calculate local today's seconds and records
                         val completedTodaySeconds = _focusRecords.value.sumOf { r ->
                             getOverlapSecondsForDate(r, todayStr)
@@ -252,34 +270,78 @@ object FocusTimerManager {
                         
                         // 2. Fetch remote today's seconds and records
                         val remoteTodayRecords = baseUser.todaysFocusRecords ?: emptyList()
-                        val remoteTotalTodayFocusedSeconds = remoteTodayRecords.sumOf { getOverlapSecondsForDate(it, todayStr) } + ((baseUser.accumulatedTimeMs ?: 0L) / 1000).toInt()
-
-                        // Check if records lists match or need merging
-                        val mergedRecordsMap = mutableMapOf<String, FocusRecord>()
                         
-                        // Populate map with local records
-                        localTodayRecords.forEach { record ->
-                            val key = "${record.startTime}|${record.endTime}|${record.taskTitle}"
-                            mergedRecordsMap[key] = record
-                        }
+                        // Process remote records: log those from web app/other devices and mark them in Firebase
+                        val updatedRemoteRecords = mutableListOf<FocusRecord>()
+                        var firebaseRemoteListModified = false
+                        var localRecordsModified = false
+                        val localListToMerge = _focusRecords.value.toMutableList()
+                        val localKeys = localTodayRecords.map { "${it.startTime}|${it.endTime}|${it.taskTitle}" }.toSet()
 
-                        var alignmentDiscrepancyFound = false
-                        var newFromRemoteCount = 0
-
-                        // Check remote records
                         remoteTodayRecords.forEach { record ->
                             val key = "${record.startTime}|${record.endTime}|${record.taskTitle}"
-                            if (!mergedRecordsMap.containsKey(key)) {
-                                mergedRecordsMap[key] = record
-                                alignmentDiscrepancyFound = true
-                                newFromRemoteCount++
+                            val hasMyMark = record.notes.contains("[logged_by_device:$myDeviceId]")
+                            
+                            // Log session on this device too if not present locally
+                            if (!localKeys.contains(key)) {
+                                val separator = if (record.notes.isEmpty()) "" else " "
+                                val markedNotes = if (!hasMyMark) {
+                                    record.notes + separator + "[logged_by_device:$myDeviceId]"
+                                } else {
+                                    record.notes
+                                }
+                                val localRecord = record.copy(notes = markedNotes)
+                                localListToMerge.add(0, localRecord)
+                                
+                                // Save to Room Database safely
+                                scope.launch(Dispatchers.IO) {
+                                    withContext(NonCancellable) {
+                                        try {
+                                            val db = com.example.data.AppDatabase.getInstance(context)
+                                            val newDbRecord = com.example.data.FocusRecordEntity(
+                                                taskTitle = record.taskTitle,
+                                                tag = record.tag,
+                                                notes = markedNotes,
+                                                durationSeconds = record.durationSeconds,
+                                                durationMinutes = record.durationMinutes,
+                                                dateString = record.dateString.ifEmpty { todayStr },
+                                                startTime = record.startTime,
+                                                endTime = record.endTime,
+                                                timestamp = System.currentTimeMillis()
+                                            )
+                                            db.focusRecordDao().insertRecord(newDbRecord)
+                                            Log.d("FocusTimerManager", "Remote session logged to Room safely.")
+                                        } catch (e: Exception) {
+                                            Log.e("FocusTimerManager", "Failure saving remote session to Room", e)
+                                        }
+                                    }
+                                }
+                                localRecordsModified = true
+                            }
+
+                            // If it does not have our mark in Firebase notes, add the mark to prevent loops
+                            if (!hasMyMark) {
+                                val separator = if (record.notes.isEmpty()) "" else " "
+                                val markedNotes = record.notes + separator + "[logged_by_device:$myDeviceId]"
+                                updatedRemoteRecords.add(record.copy(notes = markedNotes))
+                                firebaseRemoteListModified = true
+                            } else {
+                                updatedRemoteRecords.add(record)
                             }
                         }
 
-                        // Also check if remote total seconds has discrepancy
-                        if (localTotalTodayFocusedSeconds != remoteTotalTodayFocusedSeconds) {
-                            alignmentDiscrepancyFound = true
+                        if (localRecordsModified) {
+                            val sanitized = sanitizeRecordsList(localListToMerge)
+                            launch(Dispatchers.Main) {
+                                _focusRecords.value = sanitized
+                                saveFocusRecords(context, sanitized)
+                            }
                         }
+
+                        // Calculate remote total focusing seconds
+                        val remoteTotalTodayFocusedSeconds = remoteTodayRecords.sumOf { getOverlapSecondsForDate(it, todayStr) } + ((baseUser.accumulatedTimeMs ?: 0L) / 1000).toInt()
+
+                        val alignmentDiscrepancyFound = localRecordsModified || firebaseRemoteListModified || (localTotalTodayFocusedSeconds != remoteTotalTodayFocusedSeconds)
 
                         if (!alignmentDiscrepancyFound) {
                             addSystemLog(
@@ -294,31 +356,12 @@ object FocusTimerManager {
                                 context,
                                 "Discrepancy Detected",
                                 "FIREBASE_SYNC",
-                                "Mismatch found! Local has ${localTodayRecords.size} records (${formatTime(localTotalTodayFocusedSeconds)}). Remote has ${remoteTodayRecords.size} records (${formatTime(remoteTotalTodayFocusedSeconds)}). Auto-healing started..."
+                                "Mismatch found! Local has ${localTodayRecords.size} records (${formatTime(localTotalTodayFocusedSeconds)}). Remote has ${remoteTodayRecords.size} records. Auto-healing started..."
                             )
-                            
-                            // Merge remote-only records into local list
-                            if (newFromRemoteCount > 0) {
-                                val fullList = _focusRecords.value.toMutableList()
-                                val existingKeys = fullList.map { "${it.startTime}|${it.endTime}|${it.taskTitle}" }.toSet()
-                                var addedCount = 0
-                                remoteTodayRecords.forEach { record ->
-                                    val key = "${record.startTime}|${record.endTime}|${record.taskTitle}"
-                                    if (!existingKeys.contains(key)) {
-                                        fullList.add(0, record)
-                                        addedCount++
-                                    }
-                                }
-                                if (addedCount > 0) {
-                                    launch(Dispatchers.Main) {
-                                        _focusRecords.value = fullList
-                                        saveFocusRecords(context, fullList)
-                                    }
-                                }
-                            }
 
                             // Recalculate local totals after merge
-                            val updatedCompletedTodaySeconds = _focusRecords.value.sumOf { r ->
+                            val finalLocalList = if (localRecordsModified) sanitizeRecordsList(localListToMerge) else _focusRecords.value
+                            val updatedCompletedTodaySeconds = finalLocalList.sumOf { r ->
                                 getOverlapSecondsForDate(r, todayStr)
                             }
                             val updatedTotalTodayFocusedSeconds = updatedCompletedTodaySeconds + activeSessionSeconds
@@ -335,16 +378,28 @@ object FocusTimerManager {
                                 "idle"
                             }
 
+                            // Merge local-only records and remote-marked ones for final todaysFocusRecords
+                            val finalTodayRecords = finalLocalList.filter { r -> r.dateString == todayStr || r.dateString.isEmpty() }.map { record ->
+                                // Ensure they have device mark
+                                val hasMyMark = record.notes.contains("[logged_by_device:$myDeviceId]")
+                                if (!hasMyMark) {
+                                    val separator = if (record.notes.isEmpty()) "" else " "
+                                    record.copy(notes = record.notes + separator + "[logged_by_device:$myDeviceId]")
+                                } else {
+                                    record
+                                }
+                            }
+
                             val updatedUser = baseUser.copy(
                                 isFocusing = isFocusing,
                                 accumulatedTimeMs = accumulatedSessionTimeMs.value,
                                 lastResumeTimeMs = if (isFocusing) lastResumeTimeMs.value else null,
                                 currentTaskTitle = if (isFocusing) attachedTaskTitle else null,
-                                todaysFocusRecords = focusRecords.value.filter { r -> r.dateString == todayStr || r.dateString.isEmpty() },
+                                todaysFocusRecords = finalTodayRecords,
                                 isStopwatchMode = isSwActive,
                                 lastUpdatedTimestamp = System.currentTimeMillis(),
                                 focusStatus = focusStatus,
-                                lastUpdatedDeviceId = getOrCreateDeviceId(context),
+                                lastUpdatedDeviceId = myDeviceId,
                                 lastButtonClicked = lastButtonClicked.value,
                                 lastButtonClickedTimestamp = if (lastButtonClickedTimestamp.value > 0L) lastButtonClickedTimestamp.value else null,
                                 deviceLogs = getRecentLogsSerialized(context)
@@ -355,7 +410,7 @@ object FocusTimerManager {
                                 context,
                                 "Database Auto-Reconciled",
                                 "FIREBASE_SYNC",
-                                "Self-healing alignment success. Merged database contains ${mergedRecordsMap.size} records with total focus time ${formatTime(updatedTotalTodayFocusedSeconds)}."
+                                "Self-healing alignment success. Merged database contains ${finalTodayRecords.size} records with total focus time ${formatTime(updatedTotalTodayFocusedSeconds)}."
                             )
                         }
                     } else {
@@ -2509,7 +2564,16 @@ object FocusTimerManager {
         val todayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
         val cappedMinutes = if (durationMinutes > 360) 360 else durationMinutes
         val cappedSeconds = if (durationSeconds > 21600) 21600 else durationSeconds
-        val record = FocusRecord(startTime, endTime, taskTitle, cappedMinutes, todayStr, notes, cappedSeconds, tag, id = id)
+        
+        val myDeviceId = getOrCreateDeviceId(context)
+        val separator = if (notes.isEmpty()) "" else " "
+        val markedNotes = if (!notes.contains("[logged_by_device:$myDeviceId]")) {
+            notes + separator + "[logged_by_device:$myDeviceId]"
+        } else {
+            notes
+        }
+        
+        val record = FocusRecord(startTime, endTime, taskTitle, cappedMinutes, todayStr, markedNotes, cappedSeconds, tag, id = id)
         
         var updatedList: List<FocusRecord> = emptyList()
         _focusRecords.update { current ->
@@ -2528,7 +2592,7 @@ object FocusTimerManager {
                     val newDbRecord = com.example.data.FocusRecordEntity(
                         taskTitle = taskTitle,
                         tag = tag,
-                        notes = notes,
+                        notes = markedNotes,
                         durationSeconds = cappedSeconds,
                         durationMinutes = cappedMinutes,
                         dateString = todayStr,

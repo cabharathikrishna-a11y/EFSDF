@@ -589,6 +589,20 @@ class KeepAliveService : Service() {
                     com.example.api.FirebaseSyncManager.friendsLiveStatus.collect { liveFriendsMap ->
                         com.example.api.FirebaseRepository.syncAllUsers(liveFriendsMap)
                         processFriendsFocusStateAndNotify(liveFriendsMap)
+
+                        // Real-time alignment check for current user if modified by another device (e.g. ended by Web App)
+                        val meRemote = liveFriendsMap[currentUsername]
+                        if (meRemote != null) {
+                            val myDeviceId = com.example.util.FocusTimerManager.getOrCreateDeviceId(applicationContext)
+                            val localIsActive = com.example.util.FocusTimerManager.isTimerRunning.value || com.example.util.FocusTimerManager.isStopwatchActive.value
+                            val remoteIsFocusing = meRemote.isFocusing == true
+                            val remoteLastUpdatedDeviceId = meRemote.lastUpdatedDeviceId
+
+                            if (localIsActive && !remoteIsFocusing && remoteLastUpdatedDeviceId != null && remoteLastUpdatedDeviceId != myDeviceId) {
+                                Log.i("KeepAliveService", "Real-time check: Focus ended remotely by another device ($remoteLastUpdatedDeviceId). Resetting local session.")
+                                com.example.util.FocusTimerManager.performCloudAlignmentCheck(applicationContext)
+                            }
+                        }
                     }
                 }
 

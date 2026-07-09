@@ -54,12 +54,19 @@ fun TimerView(viewModel: AppViewModel, modifier: Modifier = Modifier) {
                 hasOverlayPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     Settings.canDrawOverlays(context)
                 } else true
+                // Calculate focused time again on resume
+                com.example.util.FocusTimerManager.performCloudAlignmentCheck(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
         }
+    }
+
+    LaunchedEffect(Unit) {
+        // Calculate focused time again on enter
+        com.example.util.FocusTimerManager.performCloudAlignmentCheck(context)
     }
 
     // Navigation & Modal States
