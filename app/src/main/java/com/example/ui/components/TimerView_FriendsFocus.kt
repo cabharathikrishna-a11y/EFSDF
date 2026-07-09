@@ -45,15 +45,14 @@ fun FriendsFocusPill(
     viewModel: AppViewModel,
     onClick: () -> Unit
 ) {
+    val currentMeUsername by viewModel.currentUsername.collectAsState()
     val allUsers by viewModel.allUsers.collectAsState()
 
     // Filter active users who are focusing
     val focusingUsers = allUsers.filter {
         it.value.isFocusing == true && 
         it.key != "admin" &&
-        it.value.status != "logged_out" &&
-        it.value.status != "uninstalled" &&
-        (it.value.isGoogleUser == true || !it.value.email.isNullOrBlank() || it.key == "subash" || it.key == "madhavan" || it.key == "shalini" || it.key == "maddy")
+        it.key != currentMeUsername
     }
 
     Box(
@@ -240,10 +239,7 @@ fun FriendsFocusDetailsDialog(
         keys.add(currentMeUsername)
         allUsers.forEach { (username, user) ->
             if (username != "admin" && 
-                username != currentMeUsername &&
-                user.status != "logged_out" &&
-                user.status != "uninstalled" &&
-                (user.isGoogleUser == true || !user.email.isNullOrBlank() || username == "subash" || username == "madhavan" || username == "shalini" || username == "maddy")
+                username != currentMeUsername
             ) {
                 keys.add(username)
             }

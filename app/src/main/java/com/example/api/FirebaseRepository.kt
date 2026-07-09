@@ -24,6 +24,18 @@ object FirebaseRepository {
         }
     }
 
+    fun syncAllUsers(allRemoteUsers: Map<String, UserRemote>) {
+        synchronized(lock) {
+            val currentMap = mutableMapOf<String, UserRemote>()
+            allRemoteUsers.forEach { (username, user) ->
+                currentMap[username] = user.copy(
+                    todaysFocusRecords = user.todaysFocusRecords?.toList() ?: emptyList()
+                )
+            }
+            _usersState.value = currentMap
+        }
+    }
+
     fun getUsers(): Map<String, UserRemote> {
         synchronized(lock) {
             return _usersState.value

@@ -113,8 +113,7 @@ fun FriendsFocusLeaderboardTable(
             
             val peerList = allUsers.filter { entry ->
                 entry.key != "admin" && 
-                entry.key != meUsername &&
-                (entry.value.isGoogleUser == true || !entry.value.email.isNullOrBlank() || entry.key == "subash" || entry.key == "madhavan" || entry.key == "shalini" || entry.key == "maddy")
+                entry.key != meUsername
             }
             val livePeers = peerList.map { entry ->
                 val u = entry.value
@@ -176,8 +175,7 @@ fun FriendsFocusLeaderboardTable(
                 val list = mutableListOf(liveMe)
                 val peerList = allUsers.filter { entry ->
                     entry.key != "admin" && 
-                    entry.key != (currentUsername ?: "me_user") &&
-                    (entry.value.isGoogleUser == true || !entry.value.email.isNullOrBlank() || entry.key == "subash" || entry.key == "madhavan" || entry.key == "shalini" || entry.key == "maddy")
+                    entry.key != (currentUsername ?: "me_user")
                 }
                 peerList.forEach { entry ->
                     val u = entry.value

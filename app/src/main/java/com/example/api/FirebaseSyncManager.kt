@@ -125,18 +125,16 @@ object FirebaseSyncManager {
                     _friendsLiveStatus.value = emptyMap()
                     return
                 }
-                val currentMap = _friendsLiveStatus.value.toMutableMap()
+                val newMap = mutableMapOf<String, UserRemote>()
                 snapshot.children.forEach { userSnapshot ->
                     val username = userSnapshot.key ?: return@forEach
                     val userRemote = parseUserSnapshot(userSnapshot)
                     if (userRemote != null) {
-                        currentMap[username] = userRemote
-                    } else {
-                        currentMap.remove(username)
+                        newMap[username] = userRemote
                     }
                 }
-                _friendsLiveStatus.value = currentMap
-                Log.d("FirebaseSyncManager", "Real-time update received for all users. Total users: ${currentMap.size}")
+                _friendsLiveStatus.value = newMap
+                Log.d("FirebaseSyncManager", "Real-time update received for all users. Total users: ${newMap.size}")
             }
 
             override fun onCancelled(error: DatabaseError) {

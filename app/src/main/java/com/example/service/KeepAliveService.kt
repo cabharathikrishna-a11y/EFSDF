@@ -587,7 +587,7 @@ class KeepAliveService : Service() {
                 // 3. Observe the flow safely for UI updates and notifications
                 serviceScope.launch {
                     com.example.api.FirebaseSyncManager.friendsLiveStatus.collect { liveFriendsMap ->
-                        com.example.api.FirebaseRepository.updateUsers(liveFriendsMap)
+                        com.example.api.FirebaseRepository.syncAllUsers(liveFriendsMap)
                         processFriendsFocusStateAndNotify(liveFriendsMap)
                     }
                 }
@@ -775,8 +775,7 @@ class KeepAliveService : Service() {
                 // Check for focus transitions and trigger sound alert if we are NOT focusing with 30s debounce
                 users.forEach { (username, peer) ->
                     if (username != currentUsername && 
-                        username != "admin" &&
-                        (peer.isGoogleUser == true || !peer.email.isNullOrBlank() || username == "subash" || username == "madhavan" || username == "shalini" || username == "maddy")
+                        username != "admin"
                     ) {
                         val isPeerNowFocusing = peer.isFocusing == true
                         latestFetchedPeerStates[username] = isPeerNowFocusing
@@ -1121,8 +1120,7 @@ class KeepAliveService : Service() {
             val currentUnixTime = System.currentTimeMillis() / 1000
             users.forEach { (username, u) ->
                 if (username != currentUsername && 
-                    username != "admin" &&
-                    (u.isGoogleUser == true || !u.email.isNullOrBlank() || username == "subash" || username == "madhavan" || username == "shalini" || username == "maddy")
+                    username != "admin"
                 ) {
                     val nameToShow = u.nickname ?: u.name ?: username
                     val isFocusing = u.isFocusing == true
