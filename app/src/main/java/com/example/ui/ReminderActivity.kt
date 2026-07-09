@@ -769,6 +769,22 @@ class ReminderActivity : ComponentActivity() {
         }
     }
 
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        val keyCode = event.keyCode
+        val action = event.action
+        if (action == android.view.KeyEvent.ACTION_DOWN) {
+            if (keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP || keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN) {
+                val isRingtonePlaying = ringtone?.isPlaying == true
+                val isMediaPlaying = mediaPlayer?.isPlaying == true
+                if (isRingtonePlaying || isMediaPlaying) {
+                    stopAlert()
+                    return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onDestroy() {
         stopAlert()
         super.onDestroy()

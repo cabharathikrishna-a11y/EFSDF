@@ -17,7 +17,8 @@ object FirebaseRepository {
             val currentMap = _usersState.value.toMutableMap()
             newUsers.forEach { (username, user) ->
                 currentMap[username] = user.copy(
-                    todaysFocusRecords = user.todaysFocusRecords?.toList() ?: emptyList()
+                    todaysFocusRecords = user.todaysFocusRecords?.toList() ?: emptyList(),
+                    focusRecords = user.focusRecords?.toList() ?: emptyList()
                 )
             }
             _usersState.value = currentMap
@@ -29,7 +30,8 @@ object FirebaseRepository {
             val currentMap = mutableMapOf<String, UserRemote>()
             allRemoteUsers.forEach { (username, user) ->
                 currentMap[username] = user.copy(
-                    todaysFocusRecords = user.todaysFocusRecords?.toList() ?: emptyList()
+                    todaysFocusRecords = user.todaysFocusRecords?.toList() ?: emptyList(),
+                    focusRecords = user.focusRecords?.toList() ?: emptyList()
                 )
             }
             _usersState.value = currentMap

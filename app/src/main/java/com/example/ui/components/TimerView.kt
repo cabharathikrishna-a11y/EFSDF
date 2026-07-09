@@ -54,8 +54,8 @@ fun TimerView(viewModel: AppViewModel, modifier: Modifier = Modifier) {
                 hasOverlayPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     Settings.canDrawOverlays(context)
                 } else true
-                // Calculate focused time again on resume
-                com.example.util.FocusTimerManager.performCloudAlignmentCheck(context)
+                // Calculate and sync focused time again on resume
+                com.example.util.FocusTimerManager.forceRecalculateAndSync(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -65,8 +65,8 @@ fun TimerView(viewModel: AppViewModel, modifier: Modifier = Modifier) {
     }
 
     LaunchedEffect(Unit) {
-        // Calculate focused time again on enter
-        com.example.util.FocusTimerManager.performCloudAlignmentCheck(context)
+        // Calculate and sync focused time again on enter/tab switch
+        com.example.util.FocusTimerManager.forceRecalculateAndSync(context)
     }
 
     // Navigation & Modal States
@@ -97,31 +97,8 @@ fun TimerView(viewModel: AppViewModel, modifier: Modifier = Modifier) {
     // Milestone & Dialog States
     val focusRankPopup by viewModel.focusRankPopup.collectAsStateWithLifecycle()
 
-    // Dynamically calculate focus metrics
-    val completedTodaySecs = remember(focusRecords) {
-        val systemTodayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
-        focusRecords.sumOf { com.example.util.FocusTimerManager.getOverlapSecondsForDate(it, systemTodayStr) }
-    }
-
-    val pendingSecs = remember(pendingFocusReview) {
-        val systemTodayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
-        pendingFocusReview?.let { com.example.util.FocusTimerManager.getOverlapSecondsForDate(it, systemTodayStr) } ?: 0
-    }
-
-    val globalTodaySeconds = remember(completedTodaySecs, pendingSecs, isFocusPhase, cumulativeSessionFocusSeconds, stopwatchSeconds, pendingFocusReview, sessionStartTimestamp, isTimerActive, isStopwatchActive) {
-        val systemTodayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
-        val activeSecs = if (isFocusPhase && pendingFocusReview == null) {
-            val startTs = sessionStartTimestamp
-            if ((isTimerActive || isStopwatchActive) && startTs != null) {
-                com.example.util.FocusTimerManager.getActiveSessionOverlapSeconds(startTs, systemTodayStr)
-            } else {
-                cumulativeSessionFocusSeconds + stopwatchSeconds
-            }
-        } else {
-            0
-        }
-        completedTodaySecs + pendingSecs + activeSecs
-    }
+    val liveGrandTotalSeconds by com.example.util.FocusTimerManager.liveGrandTotalSeconds.collectAsStateWithLifecycle()
+    val globalTodaySeconds = liveGrandTotalSeconds
 
     // Display Custom Date Picker Mini Calendar Dialog
     if (showCalendarDialog) {

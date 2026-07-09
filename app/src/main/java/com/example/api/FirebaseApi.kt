@@ -24,6 +24,7 @@ data class UserRemote(
     val lastResumeTimeMs: Long? = null,
     val currentTaskTitle: String? = null,
     val todaysFocusRecords: List<FocusRecord>? = null,
+    val focusRecords: List<FocusRecord>? = null,
     val isStopwatchMode: Boolean? = null,
     val lastUpdatedTimestamp: Long? = null,
     val lastButtonClicked: String? = null,

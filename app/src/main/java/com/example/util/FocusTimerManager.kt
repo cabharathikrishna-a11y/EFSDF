@@ -268,8 +268,20 @@ object FocusTimerManager {
                         }
                         val localTotalTodayFocusedSeconds = completedTodaySeconds + activeSessionSeconds
                         
-                        // 2. Fetch remote today's seconds and records
-                        val remoteTodayRecords = baseUser.todaysFocusRecords ?: emptyList()
+                        // 2. Fetch remote today's seconds and records from either todaysFocusRecords or focusRecords
+                        val calendar = java.util.Calendar.getInstance()
+                        calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
+                        calendar.set(java.util.Calendar.MINUTE, 0)
+                        calendar.set(java.util.Calendar.SECOND, 0)
+                        calendar.set(java.util.Calendar.MILLISECOND, 0)
+                        val midnightTodayMs = calendar.timeInMillis
+
+                        val rawRemoteList = (baseUser.todaysFocusRecords ?: emptyList()) + (baseUser.focusRecords ?: emptyList())
+                        val remoteTodayRecords = rawRemoteList.filter { record ->
+                            val isTodayDate = record.dateString == todayStr
+                            val isAfterMidnight = record.timestamp >= midnightTodayMs
+                            isTodayDate || isAfterMidnight
+                        }.distinctBy { "${it.startTime}|${it.endTime}|${it.taskTitle}" }
                         
                         // Process remote records: log those from web app/other devices and mark them in Firebase
                         val updatedRemoteRecords = mutableListOf<FocusRecord>()
@@ -592,6 +604,9 @@ object FocusTimerManager {
 
     private val _focusRecords = MutableStateFlow<List<FocusRecord>>(emptyList())
     val focusRecords: StateFlow<List<FocusRecord>> = _focusRecords.asStateFlow()
+
+    private val _liveGrandTotalSeconds = MutableStateFlow(0)
+    val liveGrandTotalSeconds: StateFlow<Int> = _liveGrandTotalSeconds.asStateFlow()
 
     // Option toggles (Encapsulated)
     private val _soundEnabled = MutableStateFlow(true)
@@ -1016,7 +1031,72 @@ object FocusTimerManager {
 }
 
     private fun startUiTickLoop() {
-        // No-op to prevent low-precision ticking from fighting with high-precision timer/stopwatch jobs.
+        scope.launch(Dispatchers.Main) {
+            val context = appContext ?: return@launch
+            while (true) {
+                try {
+                    recalculateGrandTotalSeconds(context)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+                delay(1000L)
+            }
+        }
+    }
+
+    fun getLiveActiveSessionSeconds(): Int {
+        val isSwActive = _isStopwatchActive.value
+        val isTimerActive = _isTimerRunning.value
+        val isFocus = _isFocusPhase.value
+        
+        if (!isFocus) return 0 // Breaks don't count towards focus time
+        
+        return if (isSwActive) {
+            val currentChunk = getCurrentChunkMs()
+            val totalMs = _accumulatedSessionTimeMs.value + currentChunk
+            (totalMs / 1000).toInt()
+        } else if (isTimerActive) {
+            val currentChunk = getCurrentChunkMs()
+            val totalMs = _accumulatedSessionTimeMs.value + currentChunk
+            (totalMs / 1000).toInt()
+        } else {
+            val accumulatedSecs = (_accumulatedSessionTimeMs.value / 1000).toInt()
+            accumulatedSecs
+        }
+    }
+
+    fun recalculateGrandTotalSeconds(context: Context) {
+        val todayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+        val calendar = java.util.Calendar.getInstance()
+        calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
+        calendar.set(java.util.Calendar.MINUTE, 0)
+        calendar.set(java.util.Calendar.SECOND, 0)
+        calendar.set(java.util.Calendar.MILLISECOND, 0)
+        val midnightTodayMs = calendar.timeInMillis
+
+        val completedTodaySeconds = _focusRecords.value.sumOf { r ->
+            val isTodayDate = r.dateString == todayStr
+            val isAfterMidnight = r.timestamp >= midnightTodayMs
+            if (isTodayDate || isAfterMidnight) {
+                getOverlapSecondsForDate(r, todayStr)
+            } else {
+                0
+            }
+        }
+
+        val activeSessionSeconds = getLiveActiveSessionSeconds()
+        _liveGrandTotalSeconds.value = completedTodaySeconds + activeSessionSeconds
+    }
+
+    fun forceRecalculateAndSync(context: Context) {
+        init(context)
+        // Instantly load from local SharedPreferences to update UI immediately
+        val localRecords = loadFocusRecords(context)
+        _focusRecords.value = localRecords
+        recalculateGrandTotalSeconds(context)
+        
+        // Trigger cloud alignment check in the background
+        performCloudAlignmentCheck(context)
     }
 
     fun setStopwatchBreakDuration(context: Context, mins: Int) {
@@ -1038,11 +1118,13 @@ object FocusTimerManager {
         alarmJob = null
     }
 
+    fun isAlarmPlaying(): Boolean {
+        return alarmJob != null && alarmJob?.isActive == true
+    }
+
     fun playStrongBellSoundWithVibration(context: Context) {
         stopAlarm()
         alarmJob = scope.launch {
-            val endTime = System.currentTimeMillis() + 10000L // 10 seconds duration
-            
             // Check if any bluetooth devices are connected to keep volume nominal (safe)
             val isBT = isBluetoothAudioConnected(context)
             val volume = if (isBT) 35 else 100 // Nominal volume of 35 when bluetooth connected, else 100
@@ -1055,29 +1137,23 @@ object FocusTimerManager {
             val vibrator = context.applicationContext.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
 
             try {
-                while (System.currentTimeMillis() < endTime) {
-                    try {
-                        // Distinct, strong bell-like alarm tone
-                        tg?.startTone(android.media.ToneGenerator.TONE_CDMA_HIGH_L, 600)
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-
-                    try {
-                        if (vibrator != null && vibrator.hasVibrator()) {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                vibrator.vibrate(android.os.VibrationEffect.createOneShot(500, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
-                            } else {
-                                @Suppress("DEPRECATION")
-                                vibrator.vibrate(500)
-                            }
+                // Distinct, strong single bell-like alarm tone
+                tg?.startTone(android.media.ToneGenerator.TONE_CDMA_HIGH_L, 1000) // 1 second duration
+                
+                try {
+                    if (vibrator != null && vibrator.hasVibrator()) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            vibrator.vibrate(android.os.VibrationEffect.createOneShot(800, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                        } else {
+                            @Suppress("DEPRECATION")
+                            vibrator.vibrate(800)
                         }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
                     }
-
-                    delay(1200L) // Wait a bit before repeating
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
+
+                delay(1200L) // Wait for the single sound to complete
             } finally {
                 tg?.release()
             }
@@ -1087,8 +1163,6 @@ object FocusTimerManager {
     fun playFriendReminderBellSound(context: Context) {
         stopAlarm()
         alarmJob = scope.launch {
-            val endTime = System.currentTimeMillis() + 5000L // 5 seconds duration
-            
             val isBT = isBluetoothAudioConnected(context)
             val volume = if (isBT) 35 else 100 // Nominal volume of 35 when bluetooth connected, else 100
             
@@ -1100,29 +1174,23 @@ object FocusTimerManager {
             val vibrator = context.applicationContext.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
 
             try {
-                while (System.currentTimeMillis() < endTime) {
-                    try {
-                        // Quick distinct ringing bell tone (TONE_CDMA_ALERT_CALL_GUARD or TONE_CDMA_HIGH_L)
-                        tg?.startTone(android.media.ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 400)
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-
-                    try {
-                        if (vibrator != null && vibrator.hasVibrator()) {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                vibrator.vibrate(android.os.VibrationEffect.createOneShot(300, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
-                            } else {
-                                @Suppress("DEPRECATION")
-                                vibrator.vibrate(300)
-                            }
+                // Quick distinct single ringing bell tone
+                tg?.startTone(android.media.ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 600)
+                
+                try {
+                    if (vibrator != null && vibrator.hasVibrator()) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            vibrator.vibrate(android.os.VibrationEffect.createOneShot(500, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                        } else {
+                            @Suppress("DEPRECATION")
+                            vibrator.vibrate(500)
                         }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
                     }
-
-                    delay(800L) // Wait a bit before repeating
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
+
+                delay(800L) // Wait for single sound to complete
             } finally {
                 tg?.release()
             }
@@ -1132,8 +1200,6 @@ object FocusTimerManager {
     fun playStopwatchBreakEndBellSound(context: Context) {
         stopAlarm()
         alarmJob = scope.launch {
-            val endTime = System.currentTimeMillis() + 3000L // 3 seconds duration
-            
             val isBT = isBluetoothAudioConnected(context)
             val volume = if (isBT) 35 else 100
             
@@ -1145,28 +1211,22 @@ object FocusTimerManager {
             val vibrator = context.applicationContext.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
 
             try {
-                while (System.currentTimeMillis() < endTime) {
-                    try {
-                        tg?.startTone(android.media.ToneGenerator.TONE_CDMA_HIGH_L, 500)
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-
-                    try {
-                        if (vibrator != null && vibrator.hasVibrator()) {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                vibrator.vibrate(android.os.VibrationEffect.createOneShot(400, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
-                            } else {
-                                @Suppress("DEPRECATION")
-                                vibrator.vibrate(400)
-                            }
+                tg?.startTone(android.media.ToneGenerator.TONE_CDMA_HIGH_L, 800)
+                
+                try {
+                    if (vibrator != null && vibrator.hasVibrator()) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            vibrator.vibrate(android.os.VibrationEffect.createOneShot(600, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                        } else {
+                            @Suppress("DEPRECATION")
+                            vibrator.vibrate(600)
                         }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
                     }
-
-                    delay(1000L) // Repeat every 1 second for 3 seconds
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
+
+                delay(1000L) // Wait for single sound to complete
             } finally {
                 tg?.release()
             }

@@ -57,32 +57,40 @@ object FirebaseSyncManager {
             val lastUpdatedDeviceId = snapshot.child("lastUpdatedDeviceId").getValue(String::class.java)
             val deviceLogs = snapshot.child("deviceLogs").getValue(String::class.java)
 
-            val todaysFocusRecords = mutableListOf<com.example.ui.FocusRecord>()
-            snapshot.child("todaysFocusRecords").children.forEach { recordSnapshot ->
-                val recordId = recordSnapshot.child("id").getValue(String::class.java) ?: java.util.UUID.randomUUID().toString()
-                val recTaskTitle = recordSnapshot.child("taskTitle").getValue(String::class.java) ?: ""
-                val recDuration = recordSnapshot.child("durationSeconds").getValue(Int::class.java) ?: 0
-                val recDurationMinutes = recordSnapshot.child("durationMinutes").getValue(Int::class.java) ?: (recDuration / 60)
-                val recStartTime = recordSnapshot.child("startTime").getValue(String::class.java) ?: ""
-                val recEndTime = recordSnapshot.child("endTime").getValue(String::class.java) ?: ""
-                val recDate = recordSnapshot.child("dateString").getValue(String::class.java) ?: ""
-                val recTag = recordSnapshot.child("tag").getValue(String::class.java) ?: ""
-                val recNotes = recordSnapshot.child("notes").getValue(String::class.java) ?: ""
+            fun parseRecordsList(recordsSnapshot: DataSnapshot): List<com.example.ui.FocusRecord> {
+                val list = mutableListOf<com.example.ui.FocusRecord>()
+                recordsSnapshot.children.forEach { recordSnapshot ->
+                    val recordId = recordSnapshot.child("id").getValue(String::class.java) ?: java.util.UUID.randomUUID().toString()
+                    val recTaskTitle = recordSnapshot.child("taskTitle").getValue(String::class.java) ?: ""
+                    val recDuration = recordSnapshot.child("durationSeconds").getValue(Int::class.java) ?: 0
+                    val recDurationMinutes = recordSnapshot.child("durationMinutes").getValue(Int::class.java) ?: (recDuration / 60)
+                    val recStartTime = recordSnapshot.child("startTime").getValue(String::class.java) ?: ""
+                    val recEndTime = recordSnapshot.child("endTime").getValue(String::class.java) ?: ""
+                    val recDate = recordSnapshot.child("dateString").getValue(String::class.java) ?: ""
+                    val recTag = recordSnapshot.child("tag").getValue(String::class.java) ?: ""
+                    val recNotes = recordSnapshot.child("notes").getValue(String::class.java) ?: ""
+                    val recTimestamp = recordSnapshot.child("timestamp").getValue(Long::class.java) ?: 0L
 
-                todaysFocusRecords.add(
-                    com.example.ui.FocusRecord(
-                        id = recordId,
-                        taskTitle = recTaskTitle,
-                        durationMinutes = recDurationMinutes,
-                        durationSeconds = recDuration,
-                        startTime = recStartTime,
-                        endTime = recEndTime,
-                        dateString = recDate,
-                        tag = recTag,
-                        notes = recNotes
+                    list.add(
+                        com.example.ui.FocusRecord(
+                            id = recordId,
+                            taskTitle = recTaskTitle,
+                            durationMinutes = recDurationMinutes,
+                            durationSeconds = recDuration,
+                            startTime = recStartTime,
+                            endTime = recEndTime,
+                            dateString = recDate,
+                            tag = recTag,
+                            notes = recNotes,
+                            timestamp = recTimestamp
+                        )
                     )
-                )
+                }
+                return list
             }
+
+            val todaysFocusRecords = parseRecordsList(snapshot.child("todaysFocusRecords"))
+            val focusRecords = parseRecordsList(snapshot.child("focusRecords"))
 
             return UserRemote(
                 password = password,
@@ -94,6 +102,7 @@ object FirebaseSyncManager {
                 lastResumeTimeMs = lastResumeTimeMs,
                 currentTaskTitle = currentTaskTitle,
                 todaysFocusRecords = todaysFocusRecords,
+                focusRecords = focusRecords,
                 isStopwatchMode = isStopwatchMode,
                 lastUpdatedTimestamp = lastUpdatedTimestamp,
                 lastButtonClicked = lastButtonClicked,
