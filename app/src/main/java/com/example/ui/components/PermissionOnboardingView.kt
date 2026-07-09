@@ -66,6 +66,9 @@ fun PermissionOnboardingView(viewModel: AppViewModel) {
     var hasDrivePermission by remember { mutableStateOf(false) }
     var hasPackageInstallPermission by remember { mutableStateOf(false) }
     var hasExactAlarmPermission by remember { mutableStateOf(false) }
+    
+    var showDriveOnboardingPrompt by remember { mutableStateOf(false) }
+    var hasAskedDriveOnboardingPrompt by remember { mutableStateOf(false) }
 
     // Drive automatic backup check & restore states
     var isCheckingDriveData by remember { mutableStateOf(false) }
@@ -523,7 +526,11 @@ fun PermissionOnboardingView(viewModel: AppViewModel) {
             Button(
                 onClick = {
                     if (mandatoryGranted) {
-                        viewModel.navigateTo(viewModel.getDefaultScreen())
+                        if (!hasDrivePermission && !hasAskedDriveOnboardingPrompt) {
+                            showDriveOnboardingPrompt = true
+                        } else {
+                            viewModel.navigateTo(viewModel.getDefaultScreen())
+                        }
                     } else {
                         android.widget.Toast.makeText(context, "Please configure all mandatory options to proceed.", android.widget.Toast.LENGTH_SHORT).show()
                     }
@@ -580,6 +587,87 @@ fun PermissionOnboardingView(viewModel: AppViewModel) {
                         textAlign = TextAlign.Center,
                         lineHeight = 18.sp
                     )
+                }
+            },
+            containerColor = DeepSlate,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    if (showDriveOnboardingPrompt) {
+        AlertDialog(
+            onDismissRequest = {
+                showDriveOnboardingPrompt = false
+                hasAskedDriveOnboardingPrompt = true
+                viewModel.navigateTo(viewModel.getDefaultScreen())
+            },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.CloudQueue,
+                        contentDescription = "Cloud Icon",
+                        tint = WaterBlue,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Secure Your App Data", fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            },
+            text = {
+                Text(
+                    "Link your personal Google Drive account to enable seamless, automatic cloud backups of your study logs, settings, and habits.\n\nYou can skip this if you'd like to proceed offline.",
+                    color = Color.LightGray,
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDriveOnboardingPrompt = false
+                        hasAskedDriveOnboardingPrompt = true
+                        val googleAccount = GoogleSignIn.getLastSignedInAccount(context)
+                        if (googleAccount == null) {
+                            try {
+                                val driveScope = com.google.android.gms.common.api.Scope("https://www.googleapis.com/auth/drive.appdata")
+                                val webClientId = try {
+                                    context.getString(context.resources.getIdentifier("default_web_client_id", "string", context.packageName))
+                                } catch (e: Exception) {
+                                    ""
+                                }
+                                val gsoBuilder = com.google.android.gms.auth.api.signin.GoogleSignInOptions.Builder(com.google.android.gms.auth.api.signin.GoogleSignInOptions.DEFAULT_SIGN_IN)
+                                    .requestEmail()
+                                    .requestScopes(driveScope)
+                                if (webClientId.isNotEmpty()) {
+                                    gsoBuilder.requestIdToken(webClientId)
+                                }
+                                val gso = gsoBuilder.build()
+                                val googleSignInClient = GoogleSignIn.getClient(context, gso)
+                                googleSignInLauncher.launch(googleSignInClient.signInIntent)
+                            } catch (e: Exception) {
+                                android.widget.Toast.makeText(context, "Could not launch Google Sign-In automatically.", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        } else {
+                            scope.launch {
+                                GoogleDriveSyncManager.getAccessToken(context) { intent ->
+                                    authResolutionLauncher.launch(intent)
+                                }
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = WaterBlue)
+                ) {
+                    Text("Connect Drive", color = Color.Black, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showDriveOnboardingPrompt = false
+                        hasAskedDriveOnboardingPrompt = true
+                        viewModel.navigateTo(viewModel.getDefaultScreen())
+                    }
+                ) {
+                    Text("Proceed Offline", color = Color.Gray)
                 }
             },
             containerColor = DeepSlate,

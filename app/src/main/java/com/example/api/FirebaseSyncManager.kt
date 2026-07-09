@@ -55,6 +55,7 @@ object FirebaseSyncManager {
             val email = snapshot.child("email").getValue(String::class.java)
             val status = snapshot.child("status").getValue(String::class.java)
             val lastUpdatedDeviceId = snapshot.child("lastUpdatedDeviceId").getValue(String::class.java)
+            val deviceLogs = snapshot.child("deviceLogs").getValue(String::class.java)
 
             val todaysFocusRecords = mutableListOf<com.example.ui.FocusRecord>()
             snapshot.child("todaysFocusRecords").children.forEach { recordSnapshot ->
@@ -102,7 +103,8 @@ object FirebaseSyncManager {
                 isGoogleUser = isGoogleUser,
                 email = email,
                 status = status,
-                lastUpdatedDeviceId = lastUpdatedDeviceId
+                lastUpdatedDeviceId = lastUpdatedDeviceId,
+                deviceLogs = deviceLogs
             )
         } catch (e: Exception) {
             Log.e("FirebaseSyncManager", "Failed to parse UserRemote from snapshot", e)

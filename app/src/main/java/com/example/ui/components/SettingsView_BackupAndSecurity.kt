@@ -842,7 +842,7 @@ fun AppBlocksSettingsSection() {
                     ) {
                         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                             Text("Surgical Reels Blocker", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                            Text("Prevents scrolling or viewing Reels completely. Instantly closes or reverts back.", color = Color.Gray, fontSize = 10.sp, lineHeight = 13.sp)
+                            Text("Actively scans and covers Reels on your Home feed with individual black cover-up displays. If you open the Reels tab or Reels viewer, it throws up a full-screen overlay stating 'Reels Blocked' with a 'Go Back' button.", color = Color.Gray, fontSize = 10.sp, lineHeight = 13.sp)
                         }
                         Switch(
                             checked = isIgReelsBlocked,
@@ -920,7 +920,7 @@ fun AppBlocksSettingsSection() {
                     ) {
                         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                             Text("Allow Shared Reel in Messages", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                            Text("Enables viewing a single reel sent in DMs. Scrolling/swiping to next is instantly blocked & returns to chat.", color = Color.Gray, fontSize = 10.sp, lineHeight = 13.sp)
+                            Text("Allows you to watch only the single shared Reel sent in your messages/chats. If you swipe or scroll to watch another Reel, the full-screen blocked overlay triggers immediately to prevent doomscrolling.", color = Color.Gray, fontSize = 10.sp, lineHeight = 13.sp)
                         }
                         Switch(
                             checked = isIgAllowSharedReels,
@@ -1090,7 +1090,7 @@ fun AppBlocksSettingsSection() {
                     ) {
                         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                             Text("Block YouTube Shorts", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                            Text("Instantly intercepts and blocks YouTube Shorts swipe-feeds.", color = Color.Gray, fontSize = 10.sp, lineHeight = 13.sp)
+                            Text("Throws up a full-screen black cover-up display with options to 'Close App' or 'Go to YouTube Home' whenever the Shorts tab is opened or any Short is played from Home, Profile, Subscriptions, or History.", color = Color.Gray, fontSize = 10.sp, lineHeight = 13.sp)
                         }
                         Switch(
                             checked = isYtShortsBlocked,

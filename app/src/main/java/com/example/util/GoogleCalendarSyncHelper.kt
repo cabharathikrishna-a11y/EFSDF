@@ -171,7 +171,8 @@ object GoogleCalendarSyncHelper {
             CalendarContract.Events.TITLE,
             CalendarContract.Events.DESCRIPTION,
             CalendarContract.Events.DTSTART,
-            CalendarContract.Events.DTEND
+            CalendarContract.Events.DTEND,
+            CalendarContract.Events.ALL_DAY
         )
 
         var eventCursor: Cursor? = null
@@ -191,8 +192,15 @@ object GoogleCalendarSyncHelper {
                     val description = cursor.getString(2) ?: ""
                     val dtStart = cursor.getLong(3)
                     val dtEnd = cursor.getLong(4)
+                    val allDay = cursor.getInt(5) == 1
 
-                    val eventDateStr = sdfDate.format(Date(dtStart))
+                    val eventDateStr = if (allDay) {
+                        val utcFormatter = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                        utcFormatter.timeZone = TimeZone.getTimeZone("UTC")
+                        utcFormatter.format(Date(dtStart))
+                    } else {
+                        sdfDate.format(Date(dtStart))
+                    }
 
                     // Check if this event has been deleted locally
                     val isDeletedLocally = DeletedTaskLogHelper.isGCalEventDeletedLocally(context, eventId.toString()) ||
@@ -249,9 +257,16 @@ object GoogleCalendarSyncHelper {
                         val gCalTime = parseTaskTime(matchedLocal.description)
                         val gCalDuration = parseTaskDuration(matchedLocal.description)
 
-                        val newHourFormatter = SimpleDateFormat("hh:mm a", Locale.US)
-                        val expectedTimeStr = newHourFormatter.format(Date(dtStart))
-                        val expectedDuration = if (dtEnd > dtStart) {
+                        val expectedTimeStr = if (allDay) {
+                            "None"
+                        } else {
+                            val newHourFormatter = SimpleDateFormat("hh:mm a", Locale.US)
+                            newHourFormatter.format(Date(dtStart))
+                        }
+
+                        val expectedDuration = if (allDay) {
+                            1440
+                        } else if (dtEnd > dtStart) {
                             ((dtEnd - dtStart) / 60000).toInt().coerceAtLeast(15)
                         } else {
                             30
@@ -261,7 +276,11 @@ object GoogleCalendarSyncHelper {
                         val actualHour = actualGCalTime.get(Calendar.HOUR_OF_DAY)
                         val actualMinute = actualGCalTime.get(Calendar.MINUTE)
 
-                        val timeChanged = gCalTime == null || gCalTime.first != actualHour || gCalTime.second != actualMinute
+                        val timeChanged = if (allDay) {
+                            gCalTime != null || matchedLocal.description.contains("[Time: None]").not()
+                        } else {
+                            gCalTime == null || gCalTime.first != actualHour || gCalTime.second != actualMinute
+                        }
                         val durationChanged = gCalDuration != expectedDuration
                         val dateChanged = matchedLocal.dueDateString != eventDateStr
                         val titleChanged = !matchedLocal.title.trim().equals(title.trim(), ignoreCase = true)
@@ -303,14 +322,20 @@ object GoogleCalendarSyncHelper {
                         }
                     } else if (!alreadySynced && !description.contains("[AppTaskId:")) {
                         // Estimate duration
-                        val estMinutes = if (dtEnd > dtStart) {
+                        val estMinutes = if (allDay) {
+                            1440
+                        } else if (dtEnd > dtStart) {
                             ((dtEnd - dtStart) / 60000).toInt().coerceAtLeast(15)
                         } else {
                             30
                         }
 
-                        val hourFormatter = SimpleDateFormat("hh:mm a", Locale.US)
-                        val timeStr = hourFormatter.format(Date(dtStart))
+                        val timeStr = if (allDay) {
+                            "None"
+                        } else {
+                            val hourFormatter = SimpleDateFormat("hh:mm a", Locale.US)
+                            hourFormatter.format(Date(dtStart))
+                        }
                         
                         val remindersList = getEventReminders(context, eventId)
                         val remindersTag = if (remindersList.isNotEmpty()) {
@@ -378,19 +403,37 @@ object GoogleCalendarSyncHelper {
                                 startMinute = parsedTime.second
                             }
 
-                            val startCal = Calendar.getInstance().apply {
-                                set(Calendar.YEAR, year)
-                                set(Calendar.MONTH, month)
-                                set(Calendar.DAY_OF_MONTH, day)
-                                set(Calendar.HOUR_OF_DAY, startHour)
-                                set(Calendar.MINUTE, startMinute)
-                                set(Calendar.SECOND, 0)
-                                set(Calendar.MILLISECOND, 0)
+                            val isAllDay = parsedTime == null || task.description.contains("[Time: None]")
+
+                            val startCal = if (isAllDay) {
+                                Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                                    set(Calendar.YEAR, year)
+                                    set(Calendar.MONTH, month)
+                                    set(Calendar.DAY_OF_MONTH, day)
+                                    set(Calendar.HOUR_OF_DAY, 0)
+                                    set(Calendar.MINUTE, 0)
+                                    set(Calendar.SECOND, 0)
+                                    set(Calendar.MILLISECOND, 0)
+                                }
+                            } else {
+                                Calendar.getInstance().apply {
+                                    set(Calendar.YEAR, year)
+                                    set(Calendar.MONTH, month)
+                                    set(Calendar.DAY_OF_MONTH, day)
+                                    set(Calendar.HOUR_OF_DAY, startHour)
+                                    set(Calendar.MINUTE, startMinute)
+                                    set(Calendar.SECOND, 0)
+                                    set(Calendar.MILLISECOND, 0)
+                                }
                             }
 
                             val durationMin = parseTaskDuration(task.description).coerceAtLeast(15)
-                            val endCal = Calendar.getInstance().apply {
-                                timeInMillis = startCal.timeInMillis + (durationMin * 60 * 1000L)
+                            val endCal = Calendar.getInstance(if (isAllDay) TimeZone.getTimeZone("UTC") else TimeZone.getDefault()).apply {
+                                if (isAllDay) {
+                                    timeInMillis = startCal.timeInMillis + (24 * 60 * 60 * 1000L)
+                                } else {
+                                    timeInMillis = startCal.timeInMillis + (durationMin * 60 * 1000L)
+                                }
                             }
 
                             val reminderMins = getTaskRemindersInMinutes(task.description)
@@ -400,7 +443,8 @@ object GoogleCalendarSyncHelper {
                                 put(CalendarContract.Events.DESCRIPTION, "${task.description}\n\n[AppTaskId: ${task.id}]")
                                 put(CalendarContract.Events.DTSTART, startCal.timeInMillis)
                                 put(CalendarContract.Events.DTEND, endCal.timeInMillis)
-                                put(CalendarContract.Events.EVENT_TIMEZONE, timeZone)
+                                put(CalendarContract.Events.EVENT_TIMEZONE, if (isAllDay) "UTC" else timeZone)
+                                put(CalendarContract.Events.ALL_DAY, if (isAllDay) 1 else 0)
                                 put(CalendarContract.Events.HAS_ALARM, if (reminderMins.isNotEmpty()) 1 else 0)
                             }
 
@@ -443,19 +487,37 @@ object GoogleCalendarSyncHelper {
                                     startMinute = parsedTime.second
                                 }
 
-                                val startCal = Calendar.getInstance().apply {
-                                    set(Calendar.YEAR, year)
-                                    set(Calendar.MONTH, month)
-                                    set(Calendar.DAY_OF_MONTH, day)
-                                    set(Calendar.HOUR_OF_DAY, startHour)
-                                    set(Calendar.MINUTE, startMinute)
-                                    set(Calendar.SECOND, 0)
-                                    set(Calendar.MILLISECOND, 0)
+                                val isAllDay = parsedTime == null || task.description.contains("[Time: None]")
+
+                                val startCal = if (isAllDay) {
+                                    Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                                        set(Calendar.YEAR, year)
+                                        set(Calendar.MONTH, month)
+                                        set(Calendar.DAY_OF_MONTH, day)
+                                        set(Calendar.HOUR_OF_DAY, 0)
+                                        set(Calendar.MINUTE, 0)
+                                        set(Calendar.SECOND, 0)
+                                        set(Calendar.MILLISECOND, 0)
+                                    }
+                                } else {
+                                    Calendar.getInstance().apply {
+                                        set(Calendar.YEAR, year)
+                                        set(Calendar.MONTH, month)
+                                        set(Calendar.DAY_OF_MONTH, day)
+                                        set(Calendar.HOUR_OF_DAY, startHour)
+                                        set(Calendar.MINUTE, startMinute)
+                                        set(Calendar.SECOND, 0)
+                                        set(Calendar.MILLISECOND, 0)
+                                    }
                                 }
 
                                 val durationMin = parseTaskDuration(task.description).coerceAtLeast(15)
-                                val endCal = Calendar.getInstance().apply {
-                                    timeInMillis = startCal.timeInMillis + (durationMin * 60 * 1000L)
+                                val endCal = Calendar.getInstance(if (isAllDay) TimeZone.getTimeZone("UTC") else TimeZone.getDefault()).apply {
+                                    if (isAllDay) {
+                                        timeInMillis = startCal.timeInMillis + (24 * 60 * 60 * 1000L)
+                                    } else {
+                                        timeInMillis = startCal.timeInMillis + (durationMin * 60 * 1000L)
+                                    }
                                 }
 
                                 val reminderMins = getTaskRemindersInMinutes(task.description)
@@ -464,7 +526,8 @@ object GoogleCalendarSyncHelper {
                                     put(CalendarContract.Events.DESCRIPTION, "${task.description}\n\n[AppTaskId: ${task.id}]")
                                     put(CalendarContract.Events.DTSTART, startCal.timeInMillis)
                                     put(CalendarContract.Events.DTEND, endCal.timeInMillis)
-                                    put(CalendarContract.Events.EVENT_TIMEZONE, timeZone)
+                                    put(CalendarContract.Events.EVENT_TIMEZONE, if (isAllDay) "UTC" else timeZone)
+                                    put(CalendarContract.Events.ALL_DAY, if (isAllDay) 1 else 0)
                                     put(CalendarContract.Events.HAS_ALARM, if (reminderMins.isNotEmpty()) 1 else 0)
                                 }
 
@@ -606,8 +669,12 @@ object GoogleCalendarSyncHelper {
     }
 
     private fun parseReminderStringToMinutes(reminderStr: String): Int? {
-        val clean = reminderStr.lowercase().replace(" before", "").trim()
-        val parts = clean.split(" ")
+        val clean = reminderStr.lowercase().trim()
+        if (clean.contains("at time of event") || clean.contains("at time")) {
+            return 0
+        }
+        val cleanBefore = clean.replace(" before", "").trim()
+        val parts = cleanBefore.split(" ")
         if (parts.size < 2) return null
         val num = parts[0].toIntOrNull() ?: return null
         val unit = parts[1]

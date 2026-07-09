@@ -257,8 +257,10 @@ fun SettingsContactsPage(
                                     .fillMaxWidth()
                                     .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(8.dp))
                                     .clickable {
+                                        val contactsScope = com.google.android.gms.common.api.Scope("https://www.googleapis.com/auth/contacts")
                                         val gso = com.google.android.gms.auth.api.signin.GoogleSignInOptions.Builder(com.google.android.gms.auth.api.signin.GoogleSignInOptions.DEFAULT_SIGN_IN)
                                             .requestEmail()
+                                            .requestScopes(contactsScope)
                                             .build()
                                         val client = com.google.android.gms.auth.api.signin.GoogleSignIn.getClient(context, gso)
                                         client.signOut().addOnCompleteListener {

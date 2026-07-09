@@ -39,7 +39,7 @@ object GoogleContactsSyncManager {
             var email = prefs.getString("selected_contacts_account", null)
             if (email.isNullOrBlank()) {
                 val account = GoogleSignIn.getLastSignedInAccount(context)
-                email = account?.email ?: "cabharathikrishna@gmail.com"
+                email = account?.email
             }
             if (email.isNullOrBlank()) {
                 Log.w(TAG, "No Google account email found.")
@@ -76,7 +76,7 @@ object GoogleContactsSyncManager {
             val localContacts = contactDao.getAllContacts().first()
 
             // ---- STEP 1: PULL FROM GOOGLE ----
-            val googleContacts = fetchGoogleConnections(token)
+            val googleContacts = fetchGoogleConnections(context, token)
             val googleIdToConnection = googleContacts.associateBy { it.resourceName }
 
             for (gContact in googleContacts) {
@@ -197,7 +197,7 @@ object GoogleContactsSyncManager {
         val additionalDatesJson: String
     )
 
-    private suspend fun fetchGoogleConnections(token: String): List<GoogleContactDetails> {
+    private suspend fun fetchGoogleConnections(context: Context, token: String): List<GoogleContactDetails> {
         val url = "https://people.googleapis.com/v1/people/me/connections?personFields=names,phoneNumbers,birthdays,photos,emailAddresses,addresses,organizations,events&pageSize=1000"
         val request = Request.Builder()
             .url(url)
@@ -209,8 +209,16 @@ object GoogleContactsSyncManager {
 
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                Log.e(TAG, "Failed to fetch connections: code=${response.code}, msg=${response.message}")
-                return emptyList()
+                val errBody = response.body?.string() ?: ""
+                Log.e(TAG, "Failed to fetch connections: code=${response.code}, msg=${response.message}, body=$errBody")
+                if (response.code == 401) {
+                    try {
+                        GoogleAuthUtil.clearToken(context, token)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error clearing cached token: ${e.message}")
+                    }
+                }
+                throw Exception("Failed to fetch Google Contacts: HTTP ${response.code} - ${response.message}. $errBody")
             }
             val bodyStr = response.body?.string() ?: ""
             Log.d(TAG, "fetchGoogleConnections Response JSON: $bodyStr")

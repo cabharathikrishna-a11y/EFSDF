@@ -60,6 +60,10 @@ import com.example.ui.components.*
 import com.example.ui.theme.DeepSlate
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.WaterBlue
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 
 class MainActivity : ComponentActivity() {
     private lateinit var database: AppDatabase
@@ -220,6 +224,77 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
+                val scope = rememberCoroutineScope()
+                val prefs = remember { context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE) }
+                
+                var hasDrivePermission by remember { mutableStateOf(com.example.util.GoogleDriveSyncManager.hasDrivePermission(context)) }
+                var showDrivePostUpdatePrompt by remember { mutableStateOf(false) }
+
+                val authResolutionLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.StartActivityForResult()
+                ) { result ->
+                    hasDrivePermission = com.example.util.GoogleDriveSyncManager.hasDrivePermission(context)
+                    if (com.example.util.GoogleDriveSyncManager.hasDrivePermission(context)) {
+                        android.widget.Toast.makeText(context, "Google Drive Authorized! Auto-backup active.", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
+
+                val googleSignInLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.StartActivityForResult()
+                ) { result ->
+                    if (result.resultCode == android.app.Activity.RESULT_OK) {
+                        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+                        try {
+                            val account = task.getResult(com.google.android.gms.common.api.ApiException::class.java)
+                            val email = account?.email ?: ""
+                            val displayName = account?.displayName ?: ""
+                            val idToken = account?.idToken
+                            if (email.isNotEmpty()) {
+                                val username = email.substringBefore("@").replace(".", "_")
+                                viewModel.handleGoogleSignInSuccess(username, email, displayName, idToken)
+                                scope.launch {
+                                    com.example.util.GoogleDriveSyncManager.getAccessToken(context) { intent ->
+                                        authResolutionLauncher.launch(intent)
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            android.widget.Toast.makeText(context, "Google Sign-In failed: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+
+                val triggerDriveAuth = {
+                    val googleAccount = GoogleSignIn.getLastSignedInAccount(context)
+                    if (googleAccount == null) {
+                        try {
+                            val driveScope = com.google.android.gms.common.api.Scope("https://www.googleapis.com/auth/drive.appdata")
+                            val webClientId = try {
+                                context.getString(context.resources.getIdentifier("default_web_client_id", "string", context.packageName))
+                            } catch (e: Exception) {
+                                ""
+                            }
+                            val gsoBuilder = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                                .requestEmail()
+                                .requestScopes(driveScope)
+                            if (webClientId.isNotEmpty()) {
+                                gsoBuilder.requestIdToken(webClientId)
+                            }
+                            val gso = gsoBuilder.build()
+                            val googleSignInClient = GoogleSignIn.getClient(context, gso)
+                            googleSignInLauncher.launch(googleSignInClient.signInIntent)
+                        } catch (e: Exception) {
+                            android.widget.Toast.makeText(context, "Could not launch Google Sign-In automatically.", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        scope.launch {
+                            com.example.util.GoogleDriveSyncManager.getAccessToken(context) { intent ->
+                                authResolutionLauncher.launch(intent)
+                            }
+                        }
+                    }
+                }
+
                 var showCelebrationDialog by remember { mutableStateOf(false) }
                 var updatedVersionCode by remember { mutableStateOf(0) }
 
@@ -228,6 +303,7 @@ class MainActivity : ComponentActivity() {
                     if (upgradedTo != null) {
                         updatedVersionCode = upgradedTo
                         showCelebrationDialog = true
+                        prefs.edit().putBoolean("has_asked_drive_permission_after_update", false).apply()
                     }
                     if (!com.example.util.AppUpdateManager.isPauseUpdatesEnabled(context)) {
                         com.example.util.AppUpdateManager.checkForUpdates(context, manualCheck = false)
@@ -236,7 +312,12 @@ class MainActivity : ComponentActivity() {
 
                 if (showCelebrationDialog) {
                     AlertDialog(
-                        onDismissRequest = { showCelebrationDialog = false },
+                        onDismissRequest = { 
+                            showCelebrationDialog = false 
+                            if (!com.example.util.GoogleDriveSyncManager.hasDrivePermission(context) && !prefs.getBoolean("has_asked_drive_permission_after_update", false)) {
+                                showDrivePostUpdatePrompt = true
+                            }
+                        },
                         title = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
@@ -259,10 +340,67 @@ class MainActivity : ComponentActivity() {
                         },
                         confirmButton = {
                             Button(
-                                onClick = { showCelebrationDialog = false },
+                                onClick = { 
+                                    showCelebrationDialog = false 
+                                    if (!com.example.util.GoogleDriveSyncManager.hasDrivePermission(context) && !prefs.getBoolean("has_asked_drive_permission_after_update", false)) {
+                                        showDrivePostUpdatePrompt = true
+                                    }
+                                },
                                 colors = ButtonDefaults.buttonColors(containerColor = com.example.ui.theme.WaterBlue)
                             ) {
                                 Text("Awesome!", color = Color.Black, fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        containerColor = Color(0xFF101014),
+                        shape = RoundedCornerShape(16.dp)
+                    )
+                }
+
+                if (showDrivePostUpdatePrompt) {
+                    AlertDialog(
+                        onDismissRequest = { 
+                            showDrivePostUpdatePrompt = false 
+                            prefs.edit().putBoolean("has_asked_drive_permission_after_update", true).apply()
+                        },
+                        title = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.CloudQueue,
+                                    contentDescription = "Cloud Icon",
+                                    tint = com.example.ui.theme.WaterBlue,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Secure Your App Data", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color.White)
+                            }
+                        },
+                        text = {
+                            Text(
+                                "To keep your habits, tasks, settings, and study sessions completely secure after this update, we highly recommend linking your Google Drive for automatic, private cloud backups.",
+                                color = Color.LightGray,
+                                fontSize = 13.sp
+                            )
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = { 
+                                    showDrivePostUpdatePrompt = false 
+                                    prefs.edit().putBoolean("has_asked_drive_permission_after_update", true).apply()
+                                    triggerDriveAuth()
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = com.example.ui.theme.WaterBlue)
+                            ) {
+                                Text("Connect Google Drive", color = Color.Black, fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(
+                                onClick = { 
+                                    showDrivePostUpdatePrompt = false 
+                                    prefs.edit().putBoolean("has_asked_drive_permission_after_update", true).apply()
+                                }
+                            ) {
+                                Text("Later", color = Color.Gray)
                             }
                         },
                         containerColor = Color(0xFF101014),

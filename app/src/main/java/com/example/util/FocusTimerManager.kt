@@ -89,6 +89,12 @@ object FocusTimerManager {
         }
     }
 
+    fun getRecentLogsSerialized(context: Context): String {
+        return systemLogs.value.take(10).joinToString("\n") { entry ->
+            "${entry.timestamp}|${entry.event}|${entry.category}|${entry.details}"
+        }
+    }
+
     fun clearSystemLogs(context: Context) {
         systemLogs.value = emptyList()
         val prefs = context.applicationContext.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
@@ -161,7 +167,7 @@ object FocusTimerManager {
 
                                 val isRunning = isTimerRunning.value || isStopwatchActive.value
                                 val focusStatus = if (!isFocus) {
-                                    "break"
+                                    "paused"
                                 } else if (isTimerRunning.value || isStopwatchActive.value) {
                                     "focusing"
                                 } else if (accumulatedSessionTimeMs.value > 0) {
@@ -179,7 +185,10 @@ object FocusTimerManager {
                                     todaysFocusRecords = todayRecords,
                                     isStopwatchMode = isSwActive,
                                     lastUpdatedTimestamp = System.currentTimeMillis(),
-                                    lastUpdatedDeviceId = getOrCreateDeviceId(context)
+                                    lastUpdatedDeviceId = getOrCreateDeviceId(context),
+                                    lastButtonClicked = lastButtonClicked.value,
+                                    lastButtonClickedTimestamp = if (lastButtonClickedTimestamp.value > 0L) lastButtonClickedTimestamp.value else null,
+                                    deviceLogs = getRecentLogsSerialized(context)
                                 )
                                 com.example.api.FirebaseClient.api.putUser(currentUsername, updatedUser)
                                 addSystemLog(context, "Firebase Sync Success", "FIREBASE_SYNC", "User state updated: status=$focusStatus, accumulatedTime=${accumulatedSessionTimeMs.value}")
@@ -317,7 +326,7 @@ object FocusTimerManager {
                             // Sync back to Firebase to align remote database completely
                             val isFocusing = (isTimerActive || isSwActive) && isFocus
                             val focusStatus = if (!isFocus) {
-                                "break"
+                                "paused"
                             } else if (isTimerActive || isSwActive) {
                                 "focusing"
                             } else if (cumSecs > 0 || swSecs > 0) {
@@ -334,7 +343,11 @@ object FocusTimerManager {
                                 todaysFocusRecords = focusRecords.value.filter { r -> r.dateString == todayStr || r.dateString.isEmpty() },
                                 isStopwatchMode = isSwActive,
                                 lastUpdatedTimestamp = System.currentTimeMillis(),
-                                focusStatus = focusStatus
+                                focusStatus = focusStatus,
+                                lastUpdatedDeviceId = getOrCreateDeviceId(context),
+                                lastButtonClicked = lastButtonClicked.value,
+                                lastButtonClickedTimestamp = if (lastButtonClickedTimestamp.value > 0L) lastButtonClickedTimestamp.value else null,
+                                deviceLogs = getRecentLogsSerialized(context)
                             )
                             com.example.api.FirebaseClient.api.putUser(currentUsername, updatedUser)
 
@@ -477,8 +490,21 @@ object FocusTimerManager {
     private val _lastLocalInteractionTimestamp = MutableStateFlow(0L)
     val lastLocalInteractionTimestamp: StateFlow<Long> = _lastLocalInteractionTimestamp.asStateFlow()
 
+    private val _lastButtonClicked = MutableStateFlow<String?>(null)
+    val lastButtonClicked: StateFlow<String?> = _lastButtonClicked.asStateFlow()
+
+    private val _lastButtonClickedTimestamp = MutableStateFlow<Long>(0L)
+    val lastButtonClickedTimestamp: StateFlow<Long> = _lastButtonClickedTimestamp.asStateFlow()
+
     fun updateLocalInteractionTimestamp() {
-        _lastLocalInteractionTimestamp.value = StableTime.currentTimeMillis()
+        val now = StableTime.currentTimeMillis()
+        _lastLocalInteractionTimestamp.value = now
+    }
+
+    fun updateLastButtonClicked(action: String, timestamp: Long = StableTime.currentTimeMillis()) {
+        _lastButtonClicked.value = action
+        _lastButtonClickedTimestamp.value = timestamp
+        _lastLocalInteractionTimestamp.value = timestamp
     }
 
     private val _stopwatchSeconds = MutableStateFlow(0)
@@ -1333,6 +1359,7 @@ object FocusTimerManager {
 
             // Auto-start break depends on autoStartBreak preference
             if (_autoStartBreak.value) {
+                updateLastButtonClicked("take_break_pomo")
                 startTimer(appContext, stopActiveAlarm = false)
             }
         } else {
@@ -1361,8 +1388,10 @@ object FocusTimerManager {
 
                 // Auto-start stopwatch if specified in settings
                 if (_autoStartStopwatchAfterBreak.value) {
+                    updateLastButtonClicked("start_stopwatch")
                     startStopwatch(appContext, stopActiveAlarm = false)
                 } else {
+                    updateLastButtonClicked("pause_stopwatch")
                     pauseStopwatch(appContext, stopActiveAlarm = false)
                 }
             } else {
@@ -1381,6 +1410,7 @@ object FocusTimerManager {
 
                 // Auto-start next focus session depends on autoStartPomo preference
                 if (_autoStartPomo.value) {
+                    updateLastButtonClicked("start_timer")
                     startTimer(appContext, stopActiveAlarm = false)
                 }
             }
